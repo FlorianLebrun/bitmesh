@@ -1,0 +1,8 @@
+set(target "polycuber-bitmesh")
+
+append_group_sources(files FILTER "*.c|*.cpp|*.h|*.hpp" ROOT "./" DIRECTORIES "./")
+
+add_executable(${target} WIN32 ${files})
+set_target_properties(${target} PROPERTIES FOLDER "Program")
+
+target_link_options(${target} PRIVATE /SUBSYSTEM:CONSOLE)

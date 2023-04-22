@@ -1,0 +1,8 @@
+{
+    "name": "polycuber-bitmesh",
+    "version": "13.0.0",
+    "license": "MIT",
+    "devDependencies": {
+        "script.cmake": "https://github.com/FlorianLebrun/script.cmake.git"
+    }
+}
