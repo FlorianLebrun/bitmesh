@@ -21,6 +21,10 @@ namespace ins {
       int32_t feedback_signal = 0;
    };
 
+   struct BitGateParameter {
+      int16_t scaleL2;
+   };
+
    struct BitLinkStats {
       // R_Cx_Iy : reward when consencus at x and input at y
       uint32_t R_C0_I0 = 0;
@@ -36,12 +40,20 @@ namespace ins {
       uint32_t drift = 0;          // mutation asymetry factor (~ around 1.0)
    };
 
-   union BitParameterStats {
-      BitGateStats gate_stats;
-      BitLinkStats link_stats;
+   struct BitLinkParameter {
+      int16_t weight_0;
+      int16_t weight_1;
    };
 
-   typedef int16_t BitParameterValue;
+   union BitUnitStats {
+      BitGateStats gate;
+      BitLinkStats link;
+   };
+
+   union BitUnitParameter {
+      BitGateParameter gate;
+      BitLinkParameter link;
+   };
 
    struct BitPointer {
       uint32_t page_index = 0;
@@ -51,9 +63,9 @@ namespace ins {
    struct BitDescriptorPage {
 
       // Parameters infos
-      BitParameterStats* params_stats;
-      BitParameterValue* params_values;
-      uint32_t params_count = 0;
+      BitUnitStats* units_stats;
+      BitUnitParameter* units_param;
+      uint32_t units_count = 0;
 
       // States infos
       uint32_t gates_count = 0;
@@ -67,12 +79,12 @@ namespace ins {
       uint32_t gates_width = 0;
 
       // Gates maps
-      BitPointer* gates_links = 0; // BitLink[descriptor.params_count]
+      BitPointer* gates_links = 0; // BitLink[descriptor.units_count]
       uint8_t* gates_states = 0; // BitLink[descriptor.states_count]
 
       // Gates params maps
-      BitParameterStats* params_stats = 0;
-      BitParameterValue* params_values = 0;
+      BitUnitStats* units_stats = 0;
+      BitUnitParameter* units_param = 0;
 
       uint32_t get_gate_paramIdx(uint32_t gate_index) {
          return this->gates_width * gate_index;
@@ -93,7 +105,7 @@ namespace ins {
          uint8_t& bit_state = this->gates_states[gate_index / 8];
          uint8_t bit_mask = 1 << (gate_index & 7);
          auto param_index = get_gate_paramIdx(gate_index);
-         this->params_stats[param_index].gate_stats.feedback_signal += feedback_signal;
+         this->units_stats[param_index].gate.feedback_signal += feedback_signal;
       }
       BitPointer* get_gate_links(uint32_t gate_index) {
          auto param_index = get_gate_paramIdx(gate_index);
@@ -101,7 +113,7 @@ namespace ins {
       }
       BitGateStats& get_gate_stats(uint32_t gate_index) {
          auto param_index = get_gate_paramIdx(gate_index);
-         return this->params_stats[param_index].gate_stats;
+         return this->units_stats[param_index].gate;
       }
       template<class GatePolicy>
       void compute_forward(BitGateMemory* memory) {
@@ -144,7 +156,7 @@ namespace ins {
 
       struct {
          size_t used_memory = 0;
-         size_t params_count = 0;
+         size_t units_count = 0;
          size_t links_count = 0;
          size_t gates_count = 0;
       } stats;
@@ -224,16 +236,16 @@ namespace ins {
       auto& desc = this->descriptors[desc_index];
 
       // Set gates page sizing
-      desc.params_count = gates_width * gates_count;
+      desc.units_count = gates_width * gates_count;
       desc.gates_width = gates_width;
       desc.gates_count = gates_count;
       desc.gates_bytes = desc.gates_count / 8;
       if (desc.gates_bytes * 8 < desc.gates_count)desc.gates_bytes++;
-      this->stats.params_count += desc.params_count;
+      this->stats.units_count += desc.units_count;
 
       // Allocate params memory
-      desc.params_stats = (BitParameterStats*)this->create_buffer(desc.params_count, sizeof(BitParameterStats));
-      desc.params_values = (BitParameterValue*)this->create_buffer(desc.params_count, sizeof(BitParameterValue));
+      desc.units_stats = (BitUnitStats*)this->create_buffer(desc.units_count, sizeof(BitUnitStats));
+      desc.units_param = (BitUnitParameter*)this->create_buffer(desc.units_count, sizeof(BitUnitParameter));
 
       // Define weights distribution stats
       uint16_t gate_scaleL2 = 8;
@@ -246,20 +258,22 @@ namespace ins {
          auto param_end = param_index + desc.gates_width;
 
          // Initiate gate core param
-         auto& stats = desc.params_stats[param_index].gate_stats;
-         desc.params_values[param_index] = gate_scaleL2;
+         auto& stats = desc.units_stats[param_index].gate;
+         desc.units_param[param_index].gate.scaleL2 = gate_scaleL2;
          stats.BitGateStats::BitGateStats();
          param_index++;
 
          // Initiate gate links param
          uint32_t weights_sum = 0;
          while (param_index < param_end) {
-            auto& lstats = desc.params_stats[param_index].link_stats;
-            auto& lweight = desc.params_values[param_index];
+            auto& lstats = desc.units_stats[param_index].link;
+            auto& lparam = desc.units_param[param_index].link;
             lstats.BitLinkStats::BitLinkStats();
 
-            lweight = (rand() % gate_weight_range) - gate_weight_offset;
-            weights_sum += std::abs(lweight);
+            auto weight = int16_t(rand() % gate_weight_range) - int16_t(gate_weight_offset);
+            lparam.weight_1 = weight;
+            lparam.weight_0 = 0;
+            weights_sum += std::abs(weight);
 
             param_index++;
          }
@@ -270,12 +284,12 @@ namespace ins {
    void BitGateMemory::create_page(uint32_t page_index, BitDescriptorPage* descriptor) {
       auto& page = this->pages[page_index];
       page.page_index = page_index;
-      page.params_stats = descriptor->params_stats;
-      page.params_values = descriptor->params_values;
+      page.units_stats = descriptor->units_stats;
+      page.units_param = descriptor->units_param;
       page.gates_count = descriptor->gates_count;
       page.gates_width = descriptor->gates_width;
       if (page.gates_width > 1) {
-         page.gates_links = (BitPointer*)this->create_buffer(descriptor->params_count, sizeof(BitPointer*));
+         page.gates_links = (BitPointer*)this->create_buffer(descriptor->units_count, sizeof(BitPointer*));
       }
       else {
          page.gates_links = 0;

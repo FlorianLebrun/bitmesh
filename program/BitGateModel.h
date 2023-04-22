@@ -95,7 +95,7 @@ namespace ins {
 
    struct ModelMemoryLayout {
       size_t page_count = 0;
-      size_t params_count = 0;
+      size_t units_count = 0;
    };
 
    struct Model {
@@ -194,7 +194,7 @@ namespace ins {
 
       // Compute layers memory layout
       size_t page_count = 0;
-      size_t params_count = 0;
+      size_t units_count = 0;
       for (auto layer : this->layers) {
          size_t gate_links_count = 0;
          for (auto& sup : layer->supports) {
@@ -205,10 +205,10 @@ namespace ins {
          }
          layer->layout.setup(gate_links_count + 1, layer->shape.width, page_count, config);
          page_count = layer->layout.page_index_last + 1;
-         params_count += layer->layout.params_per_gate * layer->layout.gate_count;
+         units_count += layer->layout.params_per_gate * layer->layout.gate_count;
       }
       this->layout.page_count = page_count;
-      this->layout.params_count = params_count;
+      this->layout.units_count = units_count;
 
       // Instanciate layers memory
       auto gates = new BitGatePage[page_count];

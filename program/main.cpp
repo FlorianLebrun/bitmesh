@@ -153,15 +153,20 @@ bool circles_image(uint8_t i, uint8_t j) {
    return c1 || c2;
 };
 
+
 int main() {
    FullConnectBinder full_binder;
 
    Model model;
+#if 0
    auto& lay_in = model.lay(Shape(2, 8));
    auto& lay_1 = model.lay(Shape(20)).on(lay_in, &full_binder);
    auto& lay_2 = model.lay(Shape(20)).on(lay_1, &full_binder);
    auto& lay_out = model.lay(Shape(1)).on(lay_2, &full_binder);
-
+#else
+   auto& lay_in = model.lay(Shape(2, 8));
+   auto& lay_out = model.lay(Shape(1)).on(lay_in, &full_binder);
+#endif
    BitGateMemory* mem = model.materialize();
 
    auto estimate_pixel = [&](uint8_t i, uint8_t j)->bool {
@@ -189,6 +194,10 @@ int main() {
    train_pixel(1, 6, halfspace_image(1, 6));
    print_layers_states(model, mem);
 
+   printf("> dataset:\n");
+   print_image(halfspace_image);
+
+   printf("> estimated:\n");
    size_t epoch_count = 100;
    size_t cycle_count = 100;
    for (size_t e = 0; e < epoch_count; e++) {
