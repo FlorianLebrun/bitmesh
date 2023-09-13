@@ -19,6 +19,16 @@ namespace ins {
 
    typedef uint32_t LayerID;
 
+   struct BitGateMemory {
+      typedef BitMesh<GateEmpty>::Memory Memory;
+      Memory* base = 0;
+      BitGateMemory() { }
+      BitGateMemory(BitGateMemory& mem) : base(mem.base) {}
+      template<typename TMemory>
+      BitGateMemory(TMemory* mem) : base((Memory*)mem) {}
+      Memory* operator ->() { return this->base; }
+   };
+
    struct Shape {
       uint32_t dims[4] = { 0 };
       uint32_t ndims = 0;
@@ -31,7 +41,7 @@ namespace ins {
 
    struct LayerBinder {
       virtual size_t get_gates_links(Layer& layer, LayerSupport& support) = 0;
-      virtual void make_gates_links(Layer& layer, LayerSupport& support, BitGateMemory& mem) = 0;
+      virtual void make_gates_links(Layer& layer, LayerSupport& support, BitGateMemory mem) = 0;
    };
 
    struct LayerSupport {
@@ -64,7 +74,6 @@ namespace ins {
       size_t page_index_last = 0;
 
       void setup(size_t params_per_gate, size_t gate_count, size_t page_index, Config& config);
-      void allocate(BitGateMemory* mem);
    };
 
    struct Layer {
@@ -81,16 +90,15 @@ namespace ins {
          this->supports.push_back(support);
          return *this;
       }
-      void foreach_gate(BitGateMemory& mem, std::function<void(BitPointer)>&& visitor) {
+      void foreach_gate(BitGateMemory mem, std::function<void(BitPointer)>&& visitor) {
          BitPointer ptr;
          for (ptr.page_index = this->layout.page_index_first; ptr.page_index <= this->layout.page_index_last; ptr.page_index++) {
-            auto gates_count = mem.pages[ptr.page_index].gates_count;
+            auto gates_count = mem->pages[ptr.page_index].gates_count;
             for (ptr.gate_index = 0; ptr.gate_index < gates_count; ptr.gate_index++) {
                visitor(ptr);
             }
          }
       }
-
    };
 
    struct ModelMemoryLayout {
@@ -102,24 +110,20 @@ namespace ins {
       std::vector<Layer*> layers;
       ModelMemoryLayout layout;
 
+      template<class T>
+      typename BitMesh<T>::Memory* materialize();
+
       Layer& lay(Shape shape);
-      BitGateMemory* materialize();
-
-      void write_vec8(std::vector<uint8_t>& values, Layer& target);
-      void read_vec8(std::vector<uint8_t>& values, Layer& target);
-
-      void write_vec1(std::vector<bool>& values, Layer& target);
-      void read_vec1(std::vector<bool>& values, Layer& target);
    };
 
    struct FullConnectBinder : LayerBinder {
       size_t get_gates_links(Layer& layer, LayerSupport& support) override {
          return support.layer.shape.width;
       }
-      void make_gates_links(Layer& layer, LayerSupport& support, BitGateMemory& mem) override {
+      void make_gates_links(Layer& layer, LayerSupport& support, BitGateMemory mem) override {
          layer.foreach_gate(mem,
             [&](BitPointer gate) {
-               auto* links = mem.get_gate_links(gate);
+               auto* links = mem->get_gate_links(gate);
                auto link_index = support.links_first;
                support.layer.foreach_gate(mem,
                   [&](BitPointer link_gate) {
@@ -173,19 +177,24 @@ namespace ins {
       this->page_index_last = page_index + this->base_page_count;
    }
 
-   void LayerMemoryLayout::allocate(BitGateMemory* mem) {
+   template<class Memory>
+   inline void allocate_layout(LayerMemoryLayout& layout, Memory* mem) {
       auto allocate_page = [&](size_t i, size_t gates_count) {
          auto& desc = mem->descriptors[i];
-         mem->create_descriptor(i, gates_count, this->params_per_gate);
+         mem->create_descriptor(i, gates_count, layout.params_per_gate);
          mem->create_page(i, &desc);
       };
-      for (size_t i = this->page_index_first; i < this->page_index_last; i++) {
-         allocate_page(i, this->gate_per_base_page);
+      for (size_t i = layout.page_index_first; i < layout.page_index_last; i++) {
+         allocate_page(i, layout.gate_per_base_page);
       }
-      allocate_page(this->page_index_last, this->gate_per_last_page);
+      allocate_page(layout.page_index_last, layout.gate_per_last_page);
    }
 
-   BitGateMemory* Model::materialize() {
+   template<class T>
+   typename BitMesh<T>::Memory* Model::materialize() {
+      typedef typename BitMesh<T>::DescriptorPage DescriptorPage;
+      typedef typename BitMesh<T>::Page Page;
+      typedef typename BitMesh<T>::Memory Memory;
 
       LayerMemoryLayout::Config config;
       config.nominal_page_params_count = 1024;
@@ -211,22 +220,24 @@ namespace ins {
       this->layout.units_count = units_count;
 
       // Instanciate layers memory
-      auto gates = new BitGatePage[page_count];
-      auto descriptors = new BitDescriptorPage[page_count];
-      auto mem = new BitGateMemory(gates, descriptors, page_count);
+      auto gates = new Page[page_count];
+      auto descriptors = new DescriptorPage[page_count];
+      auto mem = new Memory(gates, descriptors, page_count);
       for (auto layer : this->layers) {
-         layer->layout.allocate(mem);
+         allocate_layout(layer->layout, mem);
          if (layer->supports.size()) {
             for (auto& sup : layer->supports) {
-               sup.binder.make_gates_links(*layer, sup, *mem);
+               sup.binder.make_gates_links(*layer, sup, mem);
             }
-            layer->foreach_gate(*mem,
+            layer->foreach_gate(mem,
                [&](BitPointer gate) {
                   mem->get_gate_links(gate)[layer->layout.params_per_gate - 1] = gate;
                }
             );
          }
       }
+
+      mem->initialize();
 
       return mem;
    }
