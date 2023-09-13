@@ -1,6 +1,6 @@
 set(target "polycuber-bitmesh")
 
-append_group_sources(files FILTER "*.c|*.cpp|*.h|*.hpp" ROOT "./" DIRECTORIES "./")
+append_group_sources(files FILTER "*.c|*.cpp|*.h|*.hpp" ROOT "./" DIRECTORIES "./" "./gates_unit")
 
 add_executable(${target} WIN32 ${files})
 set_target_properties(${target} PROPERTIES FOLDER "Program")
