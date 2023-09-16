@@ -133,8 +133,8 @@ struct circles_image : IImage2DModel {
 
 int main() {
 
-   //halfspace4_image image_ref;
-    halfspace2_image image_ref;
+   halfspace4_image image_ref;
+   // halfspace1_image image_ref;
     //band_image image_ref;
     //circles_image image_ref;
 

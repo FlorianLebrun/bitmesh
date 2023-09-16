@@ -14,7 +14,7 @@ namespace ins {
       typedef int32_t weight_t;
       typedef int64_t weight_sum_t;
 
-      static constexpr weight_t WeightMax = 10000;
+      static constexpr weight_t WeightMax = 1024;
       static constexpr weight_t WeightMin = -WeightMax;
 
       struct Gate {
@@ -53,9 +53,9 @@ namespace ins {
       void initialize() {
 #if 1
          for (auto& link : links) {
-            link.weight = random_signed() * 1000;
+            link.weight = random_signed() * WeightMax;
          }
-         gate.weight_base = random_signed() * 1000;
+         gate.weight_base = random_signed() * WeightMax;
 #else
          for (auto& link : links) {
             link.weight = 0;
@@ -78,6 +78,7 @@ namespace ins {
          weight_sum_t acc = gate.weight_base;
          for (auto& link : links) {
             if (link.source.state) acc += link.weight;
+            else acc -= link.weight;
          }
          this->state = (acc > 0);
       }
