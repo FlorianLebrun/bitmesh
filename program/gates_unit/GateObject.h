@@ -23,7 +23,8 @@ namespace ins {
          Scalar mut_prob_neg = 0;
          Scalar mut_prob_pos = 0;
 
-         Scalar feedback_signal = 0;
+         Scalar mutation_signal = 0;
+         Scalar mutation_inhibit = 0;
       };
 
       struct Link {
@@ -44,10 +45,10 @@ namespace ins {
       Gate gate;
       std::vector<Link> links;
 
-      void emit_feeback(Scalar feedback_signal) {
+      void emit_feeback(Scalar mutation_signal) {
          if (links.size() == 0) return;
 
-         gate.feedback_signal += feedback_signal;
+         gate.mutation_signal += mutation_signal;
       }
       void initialize() {
 #if 1
@@ -66,6 +67,14 @@ namespace ins {
       void compute_forward() {
          if (links.size() == 0) return;
 
+         // Flush integrated signal
+         auto mutation_inhibit = gate.mutation_inhibit;
+         gate.mutation_inhibit = 0;
+         if (mutation_inhibit) {
+
+         }
+
+         // Compute value
          weight_sum_t acc = gate.weight_base;
          for (auto& link : links) {
             if (link.source.state) acc += link.weight;
@@ -76,9 +85,14 @@ namespace ins {
       void compute_backward() {
          if (links.size() == 0) return;
 
-         // Flush integrated feedback signal
-         auto feedback = gate.feedback_signal;
-         gate.feedback_signal = 0;
+         // Flush integrated signal
+         auto mutation_signal = gate.mutation_signal;
+         gate.mutation_signal = 0;
+         auto mutation_inhibit = gate.mutation_inhibit;
+         gate.mutation_inhibit = 0;
+         if (mutation_inhibit) {
+
+         }
 
          // Compute links weights sum
          weight_sum_t links_weights_sum = gate.weight_base;
@@ -86,16 +100,16 @@ namespace ins {
             if (link.source.state) links_weights_sum += abs(link.weight);
          }
 
-         // Compute feedback distribution params
-         Scalar feedback_prob = 1.0 * std::abs(feedback);
+         // Compute mutation signal distribution params
+         Scalar feedback_prob = 1.0 * std::abs(mutation_signal);
          Scalar feedback_factor = links_weights_sum > 0 ? (0.99 / Scalar(links_weights_sum)) : 0;
          Scalar feedback_offset = (1.0 - feedback_factor * links_weights_sum) / Scalar(links.size());
          Scalar reward_damping = 0.0;
 
-         // Integrate feedback to stats
+         // Integrate mutation signal to stats
          //--- integrate to gate stats
          {
-            if (feedback > 0) {
+            if (mutation_signal > 0) {
                gate.mut_prob_neg -= feedback_prob * reward_damping;
                gate.mut_prob_pos -= feedback_prob * reward_damping;
             }
@@ -112,16 +126,16 @@ namespace ins {
          Scalar links_feedback = 0;
          for (auto& link : links) {
 
-            // Compute link feedback
+            // Compute link mutation signal
             Scalar lfeedback = 0;
             if (link.source.state == 1) {
-               if (feedback > 0) {
+               if (mutation_signal > 0) {
                   gate.mut_prob_neg -= feedback_prob * reward_damping;
                   gate.mut_prob_pos -= feedback_prob * reward_damping;
-                  lfeedback = feedback_offset + feedback * abs(link.weight) * feedback_factor;
+                  lfeedback = feedback_offset + mutation_signal * abs(link.weight) * feedback_factor;
                }
                else {
-                  lfeedback = feedback_offset + feedback * link.weight * feedback_factor;
+                  lfeedback = feedback_offset + mutation_signal * link.weight * feedback_factor;
                   if (this->state == 0) {
                      link.mut_prob_pos += feedback_prob;
                   }
@@ -131,13 +145,13 @@ namespace ins {
                }
             }
             else {
-               if (feedback > 0) {
+               if (mutation_signal > 0) {
                   link.mut_prob_neg *= reward_damping;
                   link.mut_prob_pos *= reward_damping;
-                  lfeedback = feedback_offset + feedback * abs(link.weight) * feedback_factor;
+                  lfeedback = feedback_offset + mutation_signal * abs(link.weight) * feedback_factor;
                }
                else {
-                  lfeedback = -feedback_offset + feedback * link.weight * feedback_factor;
+                  lfeedback = -feedback_offset + mutation_signal * link.weight * feedback_factor;
                   if (this->state == 0) {
                      link.mut_prob_neg += feedback_prob;
                   }
@@ -149,7 +163,7 @@ namespace ins {
             link.mut_prob_pos = clamp<Scalar>(link.mut_prob_pos, 0, 1);
             link.mut_prob_neg = clamp<Scalar>(link.mut_prob_neg, 0, 1);
 
-            // Dispatch feedback to link input stats
+            // Dispatch mutation signal to link input stats
             link.source.emit_feeback(lfeedback);
          }
 
