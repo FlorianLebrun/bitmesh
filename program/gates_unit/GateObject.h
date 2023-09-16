@@ -24,7 +24,8 @@ namespace ins {
          Scalar mut_prob_pos = 0;
 
          Scalar mutation_signal = 0;
-         Scalar mutation_inhibit = 0;
+         Scalar forward_inhibit = 0;
+         Scalar backward_inhibit = 0;
       };
 
       struct Link {
@@ -66,21 +67,22 @@ namespace ins {
 
       void compute_forward() {
          if (links.size() == 0) return;
-
-         // Flush integrated signal
-         auto mutation_inhibit = gate.mutation_inhibit;
-         gate.mutation_inhibit = 0;
-         if (mutation_inhibit) {
-
-         }
+         Scalar mut_inhibit = 0;
 
          // Compute value
          weight_sum_t acc = gate.weight_base;
          for (auto& link : links) {
             if (link.source.state) acc += link.weight;
             else acc -= link.weight;
+            if (auto mut_inhib = link.source.gate.forward_inhibit) {
+               link.mut_prob_pos *= mut_inhib;
+               mut_inhibit += link.source.gate.forward_inhibit;
+            }
          }
          this->state = (acc > 0);
+
+         // Manage mutation inhibit
+         gate.forward_inhibit = mut_inhibit * 0.5;
       }
 
       void compute_backward() {
@@ -88,11 +90,15 @@ namespace ins {
 
          // Flush integrated signal
          auto mutation_signal = gate.mutation_signal;
+         auto backward_inhibit = gate.backward_inhibit;
          gate.mutation_signal = 0;
-         auto mutation_inhibit = gate.mutation_inhibit;
-         gate.mutation_inhibit = 0;
-         if (mutation_inhibit) {
-
+         gate.backward_inhibit = 0;
+         gate.forward_inhibit = 0;
+         if (backward_inhibit) {
+            for (auto& link : links) {
+               link.mut_prob_neg *= 0;
+               link.mut_prob_pos *= 0;
+            }
          }
 
          // Compute links weights sum
@@ -105,7 +111,7 @@ namespace ins {
          Scalar feedback_prob = 1.0 * std::abs(mutation_signal);
          Scalar feedback_factor = links_weights_sum > 0 ? (0.99 / Scalar(links_weights_sum)) : 0;
          Scalar feedback_offset = (1.0 - feedback_factor * links_weights_sum) / Scalar(links.size());
-         Scalar reward_damping = 0.0;
+         Scalar reward_damping = 1.0;
 
          // Integrate mutation signal to stats
          //--- integrate to gate stats
@@ -126,33 +132,26 @@ namespace ins {
          //--- integrate to links stats
          Scalar links_feedback = 0;
          for (auto& link : links) {
+            weight_t sign = (link.source.state == 1) ? 1 : -1;
 
             // Compute link mutation signal
             Scalar lfeedback = 0;
-            if (link.source.state == 1) {
-               if (mutation_signal > 0) {
-                  gate.mut_prob_neg -= feedback_prob * reward_damping;
-                  gate.mut_prob_pos -= feedback_prob * reward_damping;
-                  lfeedback = feedback_offset + mutation_signal * abs(link.weight) * feedback_factor;
-               }
-               else {
-                  lfeedback = feedback_offset + mutation_signal * link.weight * feedback_factor;
-                  if (this->state == 0) {
-                     link.mut_prob_pos += feedback_prob;
-                  }
-                  else {
-                     link.mut_prob_neg += feedback_prob;
-                  }
-               }
+            if (mutation_signal > 0) {
+               gate.mut_prob_neg -= feedback_prob * reward_damping;
+               gate.mut_prob_pos -= feedback_prob * reward_damping;
+               lfeedback = feedback_offset + mutation_signal * abs(link.weight) * feedback_factor;
             }
             else {
-               if (mutation_signal > 0) {
-                  link.mut_prob_neg *= reward_damping;
-                  link.mut_prob_pos *= reward_damping;
-                  lfeedback = feedback_offset + mutation_signal * abs(link.weight) * feedback_factor;
+               lfeedback = sign * feedback_offset + mutation_signal * link.weight * feedback_factor;
+               if (sign > 0) {
+                  if (this->state == 0) {
+                     link.mut_prob_pos += feedback_prob;
+                  }
+                  else {
+                     link.mut_prob_neg += feedback_prob;
+                  }
                }
                else {
-                  lfeedback = -feedback_offset + mutation_signal * link.weight * feedback_factor;
                   if (this->state == 0) {
                      link.mut_prob_neg += feedback_prob;
                   }
@@ -161,8 +160,6 @@ namespace ins {
                   }
                }
             }
-            link.mut_prob_pos = clamp<Scalar>(link.mut_prob_pos, 0, 1);
-            link.mut_prob_neg = clamp<Scalar>(link.mut_prob_neg, 0, 1);
 
             // Dispatch mutation signal to link input stats
             link.source.emit_feeback(lfeedback);
@@ -175,6 +172,12 @@ namespace ins {
          //--- mutate links weight
          for (auto& link : links) {
             overflowed |= mutate_weight(link.weight, link.mut_prob_neg, link.mut_prob_pos);
+         }
+         if (gate.backward_inhibit) {
+            for (auto& link : links) {
+               link.source.gate.backward_inhibit = gate.backward_inhibit;
+            }
+            gate.backward_inhibit = 0;
          }
          if (overflowed) {
             downscale_weights();
@@ -201,10 +204,10 @@ namespace ins {
             if (weight > WeightMax) has_overflowed = true;
          }
          if (has_mut) {
-            mut_prob_neg *= 0.5;
-            mut_prob_pos *= 0.5;
-            mut_prob_pos = clamp<Scalar>(mut_prob_pos, 0, 1);
-            mut_prob_neg = clamp<Scalar>(mut_prob_neg, 0, 1);
+            mut_prob_neg *= 0.0;
+            mut_prob_pos *= 0.0;
+            gate.forward_inhibit = 0.01;
+            gate.backward_inhibit = 0.01;
          }
          return has_overflowed;
       }
@@ -316,12 +319,12 @@ namespace ins {
             model.compute_forward();
             return outputs[0].state;
          }
-         bool train_pixel(uint8_t i, uint8_t j, bool expected) override {
+         bool train_pixel(uint8_t i, uint8_t j, bool expected, float lrate) override {
             inputs.write_vec8({ i, j });
             model.compute_forward();
             auto r = outputs[0].state;
 
-            Scalar feedback = (r == expected) ? 1.0f : -1.0f;
+            Scalar feedback = (r == expected) ? lrate : -lrate;
             outputs.emit_feeback({ feedback });
             model.compute_backward();
 
@@ -346,12 +349,12 @@ namespace ins {
             model.compute_forward();
             return outputs[0].state;
          }
-         bool train_pixel(uint8_t i, uint8_t j, bool expected) override {
+         bool train_pixel(uint8_t i, uint8_t j, bool expected, float lrate) override {
             inputs.write_vec8({ i, j });
             model.compute_forward();
             auto r = outputs[0].state;
 
-            Scalar feedback = (r == expected) ? 1.0f : -1.0f;
+            Scalar feedback = (r == expected) ? lrate : -lrate;
             outputs.emit_feeback({ feedback });
             model.compute_backward();
 

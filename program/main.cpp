@@ -133,13 +133,13 @@ struct circles_image : IImage2DModel {
 
 int main() {
 
-   halfspace4_image image_ref;
+   //halfspace4_image image_ref;
    // halfspace1_image image_ref;
     //band_image image_ref;
-    //circles_image image_ref;
+    circles_image image_ref;
 
-   Models::SingleGateImage2DModel model;
-   //Models::HiddenLayerImage2DModel model;
+   //Models::SingleGateImage2DModel model;
+   Models::HiddenLayerImage2DModel model;
 
    print_clean();
    print_line(3, "> dataset:");
@@ -148,14 +148,16 @@ int main() {
 
    size_t epoch_count = 10000;
    size_t cycle_count = 100;
+   double lrate = 1.0;
    for (size_t e = 0; e < epoch_count; e++) {
       for (size_t c = 0; c < cycle_count; c++) {
          size_t i = rand() % 32;
          size_t j = rand() % 32;
          auto expected = image_ref.estimate_pixel(i, j);
-         model.train_pixel(i, j, expected);
+         model.train_pixel(i, j, expected, lrate);
+         //lrate *= 0.9999;
       }
-      print_line(3, "> iteration: %d", e * cycle_count);
+      print_line(3, "> iteration: %d (rate=%lg)", e * cycle_count, lrate);
       model.print_image();
    }
 

@@ -16,11 +16,10 @@ namespace ins {
    struct IImage2DModel {
       virtual bool estimate_pixel(uint8_t i, uint8_t j) = 0;
       void print_image(int at_line = 4);
-
    };
 
    struct IImage2DTrainable : IImage2DModel {
-      virtual bool train_pixel(uint8_t i, uint8_t j, bool expected) = 0;
+      virtual bool train_pixel(uint8_t i, uint8_t j, bool expected, float lrate) = 0;
    };
 
    struct Probabilistic {
